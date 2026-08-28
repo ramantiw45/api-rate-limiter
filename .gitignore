@@ -1,0 +1,21 @@
+# Maven
+target/
+*.jar
+!**/src/main/**/*.jar
+!**/src/test/**/*.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.DS_Store
+
+# Maven wrapper binaries (committed only if using Spring Initializr wrapper)
+.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+
+# Spring Boot dev tools restart
+.spring-boot-devtools.properties
+
+# Docker
+*.env

@@ -1,0 +1,74 @@
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Redis 7 – Token Bucket state store
+  # ─────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rate-limiter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    # Persist state every 60 s if at least 1 key changed; suppress noisy logs
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Spring Cloud Gateway – API Rate Limiter & Reverse Proxy
+  # ─────────────────────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rate-limiter-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      # Override Spring Data Redis connection to reach the redis service
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Local-development defaults only. Override these values in .env for any
+      # shared or deployed environment (see .env.example).
+      ACTUATOR_USERNAME: ${ACTUATOR_USERNAME:-actuator}
+      ACTUATOR_PASSWORD: ${ACTUATOR_PASSWORD:-change-me-local-only}
+      # SHA-256("local-development-key"). The plaintext key is never passed to
+      # the application; replace this digest in every non-local environment.
+      API_KEY_SHA256_HASHES: ${API_KEY_SHA256_HASHES:-4c88089bdf15cb0dffde5c179461a2f99fa7cfb0bed250a8d87f8aa1d80eaa11}
+      # Optional: bump to DEBUG for verbose gateway routing logs
+      LOGGING_LEVEL_COM_API_RATELIMITER: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gateway-net
+    restart: unless-stopped
+    healthcheck:
+      # wget is available on Alpine; curl is not installed by default
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider",
+             "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s   # allow JVM warm-up time
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared overlay network (bridge)
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  gateway-net:
+    driver: bridge
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Named volume for Redis persistence
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  redis-data:

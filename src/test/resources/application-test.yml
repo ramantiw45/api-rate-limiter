@@ -1,0 +1,24 @@
+gateway:
+  security:
+    actuator:
+      username: test-actuator
+      password: test-actuator-password
+    api-key:
+      sha256-hashes:
+        - 42b08c5c677e30138f6dd9cf45f05cdd49eedd57e9af4fbc9749aa5c9c6c399b # test-warmup-key
+        - b8a1975857a4e03ab1596ebeeb43ddd1510900c31141b7f6e592cbba0031925a # test-happy-key
+        - eb03d4affa9ab6f7517881138860d10013f5d0cd0b7c9dc4672daa212c6461d0 # test-timeout-key
+        - 736ffb31c25c88d3a200b6085f1080fd398f9f6569ebf341f1b9180150cf7f22 # test-open-key
+        - 6ca62ade3bbd7228799c8974b681e6b2b3db7ff8e86ca8719ffa03ced880e370 # test-recovery-key
+        - 673937e3f659bacd06030ed23a5c3e82f268fcd7b7da16f12f76100ef485bf7d # test-rate-limit-key
+
+management:
+  health:
+    # Security tests must not depend on a developer machine's Redis process.
+    # Rate-limiter integration tests still exercise Redis through the route.
+    redis:
+      enabled: false
+
+logging:
+  level:
+    com.api.ratelimiter: INFO
