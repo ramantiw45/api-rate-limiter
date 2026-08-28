@@ -1,0 +1,132 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-rate-limiter
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Redis connection (overridden via env vars in Docker / docker-compose)
+  # ─────────────────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: 2000ms
+      timeout: 1000ms
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Spring Cloud Gateway
+  # ─────────────────────────────────────────────────────────────────────────────
+  cloud:
+    gateway:
+      # Remove duplicate CORS headers that some upstreams echo back
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+
+      # ── Reactor Netty HTTP client timeouts (defense-in-depth, layer 1) ────────
+      # These are the hard ceiling for ANY downstream call made by the gateway.
+      # The Resilience4j TimeLimiter below is tuned tighter than this so it is
+      # normally the one that trips first; this is the backstop if it doesn't.
+      httpclient:
+        connect-timeout: 2000    # ms – time allowed to establish the TCP connection
+        response-timeout: 5s     # time allowed for the full request/response cycle
+
+      routes:
+        # ── Route: /echo/** → https://httpbin.org/anything/** ──────────────────
+        # uri is overridable via ECHO_UPSTREAM_URI (used by integration tests to
+        # point at a local mock server instead of the real, flaky internet).
+        - id: echo-route
+          uri: ${ECHO_UPSTREAM_URI:https://httpbin.org}
+          predicates:
+            - Path=/echo/**
+          filters:
+            # Strip the leading /echo segment before forwarding:
+            #   /echo/test  →  https://httpbin.org/anything/test
+            - StripPrefix=1
+
+            # Redis Token-Bucket rate limiter.
+            # IMPORTANT: must run BEFORE CircuitBreaker below, so that 429
+            # rejections short-circuit the chain and never count as CB failures.
+            - name: RequestRateLimiter
+              args:
+                # Tokens refilled per second (steady-state throughput)
+                redis-rate-limiter.replenishRate: 5
+                # Maximum tokens in the bucket (burst allowance)
+                redis-rate-limiter.burstCapacity: 10
+                # Tokens consumed per request
+                redis-rate-limiter.requestedTokens: 1
+                # SpEL reference to our KeyResolver bean
+                key-resolver: "#{@clientKeyResolver}"
+
+            # Circuit Breaker + application-level timeout (defense-in-depth, layer 2).
+            # Config (thresholds, timeout duration) lives in
+            # com.api.ratelimiter.config.ResilienceConfig / CircuitBreakerProperties.
+            - name: CircuitBreaker
+              args:
+                name: echoCircuitBreaker
+                fallbackUri: forward:/fallback/echo
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Circuit Breaker / TimeLimiter tuning for the "echoCircuitBreaker" instance.
+# Bound to com.api.ratelimiter.config.CircuitBreakerProperties and consumed by
+# com.api.ratelimiter.config.ResilienceConfig. Overridable per-environment
+# (and overridden with much smaller values in integration tests for speed).
+# ─────────────────────────────────────────────────────────────────────────────
+gateway:
+  security:
+    actuator:
+      username: ${ACTUATOR_USERNAME:actuator}
+      # No insecure application default: startup fails unless supplied by the
+      # environment (docker-compose provides an explicit local-only default).
+      password: ${ACTUATOR_PASSWORD:}
+    api-key:
+      # Comma-separated SHA-256 hex digests, never plaintext API keys.
+      sha256-hashes: ${API_KEY_SHA256_HASHES:}
+      # Bounds hashing work and rejects pathological oversized credentials.
+      max-length: 512
+
+  circuit-breaker:
+    # Max time to wait for the downstream call before treating it as a failure.
+    timeout-duration-ms: 4000
+    # Number of most-recent calls evaluated for the failure rate.
+    sliding-window-size: 10
+    # Minimum calls needed before the failure rate is even evaluated.
+    minimum-number-of-calls: 5
+    # Percentage of failures within the window that trips the breaker OPEN.
+    failure-rate-threshold: 50
+    # How long the breaker stays OPEN (fast-failing every call) before probing.
+    wait-duration-in-open-state-ms: 10000
+    # Trial calls allowed through in HALF_OPEN state to decide recovery.
+    permitted-calls-in-half-open-state: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Actuator – expose health, metrics, gateway, and Prometheus endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health, metrics, gateway, prometheus, circuitbreakerevents
+  endpoint:
+    health:
+      # Anonymous probes see only {"status":"UP"}; authenticated Actuator
+      # users can inspect Redis, circuit-breaker, and disk-space details.
+      show-details: when_authorized
+      roles: ACTUATOR
+    gateway:
+      enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.api.ratelimiter: DEBUG
+    org.springframework.cloud.gateway: INFO
+    org.springframework.data.redis: WARN
+    io.lettuce: WARN
