@@ -1,19 +1,18 @@
-# Distributed API Rate Limiter & Resilient Gateway
+# Enterprise API Rate Limiter & Edge Gateway
+
+An enterprise-grade, non-blocking API Rate Limiter and Edge Gateway built with **Spring Cloud Gateway (Reactive)**, **Redis (Token Bucket Algorithm)**, **Resilience4j (Circuit Breaker & TimeLimiter)**, **OpenTelemetry & Zipkin (Distributed Tracing)**, **Prometheus & Grafana (Real-Time Observability)**, and **Spring Security (Constant-Time SHA-256 API Key Authentication)**.
 
 [![Java 21](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![Spring Cloud](https://img.shields.io/badge/Spring%20Cloud-2023.0.3-blue.svg)](https://spring.io/projects/spring-cloud)
-[![Redis](https://img.shields.io/badge/Redis-7%20Alpine-red.svg)](https://redis.io/)
-[![Resilience4j](https://img.shields.io/badge/Resilience4j-Circuit%20Breaker-yellowgreen.svg)](https://resilience4j.readme.io/)
-[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-Zipkin%20Tracing-blueviolet.svg)](https://opentelemetry.io/)
-[![k6](https://img.shields.io/badge/k6-Load%20Testing-7D64FF.svg)](https://k6.io/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
-
-An enterprise-grade, non-blocking API Gateway built with **Spring Cloud Gateway (Project Reactor / Netty)**, distributed **Redis Token-Bucket Rate Limiting**, **Resilience4j Circuit Breaking & Timeouts**, **Zero-Trust Constant-Time SHA-256 Authentication**, **Distributed Tracing (Micrometer + OpenTelemetry + Zipkin)**, and **Redis Sentinel High Availability**.
+[![Spring Boot 3.3.4](https://img.shields.io/badge/Spring%20Boot-3.3.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Cloud 2023.0.3](https://img.shields.io/badge/Spring%20Cloud-2023.0.3-blue.svg)](https://spring.io/projects/spring-cloud)
+[![Redis 7](https://img.shields.io/badge/Redis-7.0-red.svg)](https://redis.io/)
+[![Prometheus](https://img.shields.io/badge/Prometheus-v2.54.1-orange.svg)](https://prometheus.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-v11.2.0-F46800.svg)](https://grafana.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
 - [Overview & Architecture](#overview--architecture)
 - [Business Logic Explained Simply](#business-logic-explained-simply)
@@ -21,12 +20,8 @@ An enterprise-grade, non-blocking API Gateway built with **Spring Cloud Gateway 
 - [System Architecture Diagram](#system-architecture-diagram)
 - [Quick Start with Docker Compose](#quick-start-with-docker-compose)
 - [Step-by-Step API Testing Guide](#step-by-step-api-testing-guide)
-  - [1. Happy Path Request (200 OK)](#1-happy-path-request-200-ok)
-  - [2. Rate Limiting in Action (429 Too Many Requests)](#2-rate-limiting-in-action-429-too-many-requests)
-  - [3. Zero-Trust Authentication Failures (401 Unauthorized)](#3-zero-trust-authentication-failures-401-unauthorized)
-  - [4. Circuit Breaker & Timeout Fallback (503 Service Unavailable)](#4-circuit-breaker--timeout-fallback-503-service-unavailable)
-  - [5. Actuator Health Probes & RBAC](#5-actuator-health-probes--rbac)
-  - [6. Distributed Tracing in Zipkin](#6-distributed-tracing-in-zipkin)
+- [Distributed Tracing & Zipkin](#distributed-tracing--zipkin)
+- [Production Observability: Prometheus & Grafana](#production-observability-prometheus--grafana)
 - [Automated Load Testing Suite (k6)](#automated-load-testing-suite-k6)
 - [Redis High Availability (Sentinel Failover)](#redis-high-availability-sentinel-failover)
 - [Configuration Reference](#configuration-reference)
@@ -86,12 +81,12 @@ Like an electrical circuit breaker in your home that trips when current spikes t
   - Implements **Micrometer Tracing** with the **OpenTelemetry** bridge and **Zipkin** reporter.
   - Automatically preserves trace context across Netty thread switches via `Hooks.enableAutomaticContextPropagation()`.
   - Stamps inbound and outbound requests with W3C-compliant `traceparent` headers and echoes `X-Request-ID` and `X-Trace-ID` on all client responses.
+- **Production Observability (Prometheus & Grafana)**:
+  - Publishes SLA histogram distributions and percentiles (p50, p95, p99) to `/actuator/prometheus`.
+  - Auto-provisioned Grafana dashboards tracking live throughput, 429 drops, circuit breaker states, and JVM resource limits.
 - **Hardened Actuator & Role-Based Access Control**:
   - Unauthenticated clients see only minimal health status (`{"status":"UP"}`).
-  - Internal metrics, Prometheus scraping, route mappings, and circuit breaker events require HTTP Basic authentication (`ROLE_ACTUATOR`).
-- **Container-Optimized Production Image**:
-  - Multi-stage Dockerfile built on Alpine Linux and Eclipse Temurin 21 JRE.
-  - Configured with Java 21 Generational Z Garbage Collector (`-XX:+UseZGC -XX:+ZGenerational`) for ultra-low latency pauses (<1ms).
+  - Detailed component health, Prometheus metrics, and circuit breaker events are restricted to users with the `ROLE_ACTUATOR` role over HTTP Basic Auth.
 
 ---
 
@@ -175,10 +170,12 @@ docker compose ps
 
 Expected output:
 ```
-NAME                   IMAGE                      STATUS                    PORTS
-rate-limiter-gateway   api-rate-limiter-gateway   Up (healthy)              0.0.0.0:8080->8080/tcp
-rate-limiter-redis     redis:7-alpine             Up (healthy)              0.0.0.0:6379->6379/tcp
-rate-limiter-zipkin    openzipkin/zipkin:3        Up (healthy)              0.0.0.0:9411->9411/tcp
+NAME                      IMAGE                      STATUS                    PORTS
+rate-limiter-gateway      api-rate-limiter-gateway   Up (healthy)              0.0.0.0:8080->8080/tcp
+rate-limiter-redis        redis:7-alpine             Up (healthy)              0.0.0.0:6379->6379/tcp
+rate-limiter-zipkin       openzipkin/zipkin:3        Up (healthy)              0.0.0.0:9411->9411/tcp
+rate-limiter-prometheus   prom/prometheus:v2.54.1    Up                        0.0.0.0:9090->9090/tcp
+rate-limiter-grafana      grafana/grafana:11.2.0     Up                        0.0.0.0:3000->3000/tcp
 ```
 
 ---
@@ -230,61 +227,82 @@ done
 ... (10 requests succeed)
 429
 429
-429
+... (remaining requests rejected)
 ```
 
----
-
-### 3. Zero-Trust Authentication Failures (401 Unauthorized)
-
-#### Missing Header
+**Inspecting the 429 Error Body**:
 ```bash
-curl -i http://localhost:8080/echo/get
+curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/get
 ```
 ```http
-HTTP/1.1 401 Unauthorized
-{"timestamp":"2026-09-05T17:45:00Z","status":401,"error":"Unauthorized","message":"Missing X-API-Key header"}
-```
-
-#### Invalid / Tampered Key
-```bash
-curl -i -H "X-API-Key: invalid-key-attack" http://localhost:8080/echo/get
-```
-```http
-HTTP/1.1 401 Unauthorized
-{"timestamp":"2026-09-05T17:45:05Z","status":401,"error":"Unauthorized","message":"Invalid API key"}
-```
-
----
-
-### 4. Circuit Breaker & Timeout Fallback (503 Service Unavailable)
-Test the Resilience4j TimeLimiter by calling an upstream endpoint with artificial latency greater than our 4.0-second limit:
-
-```bash
-curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/delay/5
-```
-
-The gateway interrupts the call after 4,000ms and invokes `FallbackController`:
-```http
-HTTP/1.1 503 Service Unavailable
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Remaining: 0
+Retry-After: 1
 Content-Type: application/json
-X-Request-ID: 8c1c4f52-4752-4740-8b1b-9f935ee5a1df
-X-Trace-ID: 7a86f1e319fa3ec9c5f8dfb1580d8a57
 
 {
-  "timestamp": "2026-09-05T17:45:10.123Z",
-  "status": 503,
-  "error": "Service Unavailable",
-  "message": "The upstream echo service is experiencing high latency or failure. Request degraded by gateway circuit breaker.",
-  "path": "/fallback/echo"
+  "error": "TOO_MANY_REQUESTS",
+  "message": "Token bucket depleted. Please back off before retrying.",
+  "status": 429,
+  "timestamp": "2026-09-05T17:15:00Z"
 }
 ```
 
 ---
 
-### 5. Actuator Health Probes & RBAC
+### 3. Authentication & Security Enforcement (401 Unauthorized)
+Attempt an unauthenticated request without an API key:
 
-#### Public Unauthenticated Health Probe
+```bash
+curl -i http://localhost:8080/echo/get
+```
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{
+  "error": "UNAUTHORIZED",
+  "message": "Missing or invalid API key.",
+  "status": 401
+}
+```
+
+Attempt with a forged or tampered API key:
+```bash
+curl -i -H "X-API-Key: malicious-attacker-key" http://localhost:8080/echo/get
+```
+```http
+HTTP/1.1 401 Unauthorized
+```
+
+---
+
+### 4. Circuit Breaker & Timeout Tripping (503 Service Unavailable)
+Call an upstream endpoint that delays for 5 seconds (exceeding our 4,000ms TimeLimiter threshold):
+
+```bash
+curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/delay/5
+```
+
+**Result**: At exactly 4,000ms, the TimeLimiter interrupts the call and invokes the local fallback controller:
+```http
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+
+{
+  "error": "SERVICE_DEGRADED",
+  "message": "The downstream service is currently slow or unavailable. Fallback response served.",
+  "status": 503,
+  "timestamp": "2026-09-05T17:16:30Z"
+}
+```
+
+Repeat 5 times to exceed the `failureRateThreshold` (50%). The circuit breaker transitions to **`OPEN`**, instantly fast-failing subsequent calls in **sub-20ms** without even attempting downstream network calls.
+
+---
+
+### 5. Inspecting Authenticated Health & Prometheus Actuator
+Accessing Actuator without credentials yields only basic status:
 ```bash
 curl -i http://localhost:8080/actuator/health
 ```
@@ -292,30 +310,76 @@ curl -i http://localhost:8080/actuator/health
 {"status":"UP"}
 ```
 
-#### Authenticated Deep Health Probe
-Inspect Redis connectivity, disk status, and circuit breaker states:
+Accessing full diagnostics with `ROLE_ACTUATOR` credentials:
 ```bash
-curl -i -u actuator:SuperSecretActuatorPass123! http://localhost:8080/actuator/health
+curl -s -u actuator:SuperSecretActuatorPass123! http://localhost:8080/actuator/health | jq .
 ```
-
-#### Scrape Prometheus Metrics
-```bash
-curl -s -u actuator:SuperSecretActuatorPass123! http://localhost:8080/actuator/prometheus | grep resilience4j_circuitbreaker
+```json
+{
+  "status": "UP",
+  "components": {
+    "circuitBreakers": {
+      "status": "UP",
+      "details": {
+        "echoCircuitBreaker": {
+          "status": "UP",
+          "details": {
+            "failureRate": "-1.0%",
+            "state": "CLOSED"
+          }
+        }
+      }
+    },
+    "redis": {
+      "status": "UP",
+      "details": {
+        "version": "7.0.15"
+      }
+    }
+  }
+}
 ```
 
 ---
 
-### 6. Distributed Tracing in Zipkin
+## Distributed Tracing & Zipkin
 
-1. Open your browser and navigate to **[http://localhost:9411](http://localhost:9411)**.
-2. Click **Run Query**.
-3. Select any trace to inspect the waterfall breakdown detailing Netty server ingress, security validation, token decrement, and downstream latency.
+Distributed tracing allows developers to observe the complete request timeline across boundaries.
+
+1. **Access Zipkin UI**: Open your browser at [http://localhost:9411](http://localhost:9411).
+2. **Search by Trace ID**: Copy the `X-Trace-ID` returned in the HTTP response headers and search for it directly.
+3. **Trace Propagation**:
+   - Spans record client IP, API key fingerprint, HTTP route ID, and timing breakdowns.
+   - Trace IDs propagate into application logs via MDC pattern:
+     ```
+     INFO [api-rate-limiter,4a3bfbcc4a31cbf2dbacf63800e65da7,67db477f5c78ca1c] 1 --- [api-rate-limiter] c.a.r.filter.GlobalLoggingFilter : [4a3bfbcc4a31cbf2] <-- GET /echo/get | client=key-fingerprint:b8a1975857a4 | status=200 | latency=24ms
+     ```
+
+---
+
+## Production Observability: Prometheus & Grafana
+
+The gateway publishes real-time Prometheus metrics at `/actuator/prometheus`. A fully provisioned Grafana observability platform with pre-configured dashboards is automatically deployed alongside the application:
+
+- **Grafana Web UI**: [http://localhost:3000](http://localhost:3000) (Credentials: `admin` / `admin`)
+- **Pre-Built Dashboard**: Navigate to **Dashboards → Gateway Observability → API Rate Limiter & Gateway Overview**
+- **Prometheus TSDB**: [http://localhost:9090](http://localhost:9090)
+- **Zipkin Distributed Tracing**: [http://localhost:9411](http://localhost:9411)
+
+### Visual Telemetry Highlights
+- **Rate Limit Drops**: Real-time counter and rate graph of HTTP 429 token exhaustion events.
+- **Circuit Breaker State Machine**: Visual categorical card displaying `CLOSED (Healthy)`, `HALF_OPEN (Testing)`, or `OPEN (Tripped)`.
+- **Latency Percentiles**: P50 median, P95, and P99 latency distribution curves computed via Prometheus histogram quantiles.
+- **Edge vs Upstream Latency**: Differential breakdown showing gateway processing overhead vs downstream network latency.
+- **Inbound Throughput**: Color-coded request volume categorized by HTTP status code.
+
+👉 See [**Observability Guide**](docs/observability.md) for PromQL queries, metrics dictionary, and panel architecture.
 
 ---
 
 ## Automated Load Testing Suite (k6)
 
-The repository includes automated performance and resilience benchmarks powered by [Grafana k6](https://k6.io/). Run benchmarks directly via Docker without host installations:
+The project includes an enterprise-grade automated benchmarking suite in `load-tests/` executed via containerized **Grafana k6**:
 
 ### 1. Burst Capacity Benchmark
 Fires 25 concurrent requests in a 1-second burst window. Verifies that exactly 10 requests succeed (`200 OK`) and 15 requests are rejected with `429 Too Many Requests`:
@@ -413,15 +477,20 @@ API_KEY_SHA256_HASHES=0b21665133000ed0918be369efd62a7886b5b382afba0a66ca7adfe883
 ```
 api-rate-limiter/
 ├── .env.example                               # Template for secrets and credentials
-├── docker-compose.yml                         # Standalone orchestration: Gateway, Redis 7, Zipkin 3, k6
-├── docker-compose.ha.yml                      # High Availability: 1 Master, 1 Replica, 3 Sentinels, Gateway
+├── docker-compose.yml                         # Standalone orchestration: Gateway, Redis, Zipkin, Prometheus, Grafana, k6
+├── docker-compose.ha.yml                      # High Availability: 1 Master, 1 Replica, 3 Sentinels, Gateway, Prometheus, Grafana
 ├── Dockerfile                                 # Multi-stage container build (JDK 21 + JRE 21)
 ├── pom.xml                                    # Dependencies (Spring Boot 3.3.4, OTel, Resilience4j)
 ├── docker/
+│   ├── prometheus/                            # Prometheus scrape targets & interval configuration
+│   ├── grafana/                               # Automated datasource & dashboard provisioning
+│   │   ├── dashboards/                        # Pre-built JSON dashboard definitions
+│   │   └── provisioning/                      # Datasource and provider YAML files
 │   └── redis-ha/                              # Sentinel entrypoint and runtime provisioning
 ├── docs/                                      # In-depth technical guides
 │   ├── architecture.md                        # Filter execution, thread model & state machines
 │   ├── security-model.md                      # Constant-time auth, timing attacks & RBAC
+│   ├── observability.md                       # Prometheus metrics, PromQL queries & Grafana panels
 │   └── redis-ha.md                            # Redis Sentinel HA quorum & failover mechanics
 ├── load-tests/                                # Automated k6 load testing suite
 │   ├── rate-limit-burst.js                    # Burst capacity benchmark
@@ -449,48 +518,39 @@ api-rate-limiter/
     │   │       ├── ApiKeyHasher.java          # Utility for SHA-256 hashing & fingerprinting
     │   │       └── ApiKeyValidator.java       # Constant-time MessageDigest validator
     │   └── resources/
-    │       └── application.yml                # Master route definitions, timeouts & observability
+    │       └── application.yml                # Dynamic routing, rate-limits & observability
     └── test/
-        ├── java/com/api/ratelimiter/
-        │   ├── ApiKeyValidationFilterTest.java# Unit tests for key parsing and validation
-        │   ├── ApiRateLimiterApplicationTests.java # Context loading & filterchain tests
-        │   ├── CircuitBreakerTimeoutTest.java # MockServer tests for timeouts and tripping
-        │   ├── DistributedTracingIntegrationTest.java # OTel spans and traceparent propagation
-        │   └── SecurityIntegrationTest.java   # RBAC & constant-time auth verification
-        └── resources/
-            └── application-test.yml           # Test profile with accelerated timeouts
+        └── java/com/api/ratelimiter/          # Integration & unit test suites (28 tests)
 ```
 
 ---
 
 ## Automated Testing & Quality Suite
 
-The project includes an integration test suite validating every tier of the architecture. Tests spin up simulated upstreams with WireMock/MockWebServer and execute full reactive end-to-end assertions.
-
-Execute all unit and integration tests:
+The test suite covers unit tests, reactive web tests, and security tests. Run the full suite with:
 
 ```bash
-mvn clean verify
+mvn clean test
 ```
 
-### Coverage Highlights
-- **`SecurityIntegrationTest`**: Verifies anonymous actuator allowlists, RBAC challenges on metrics, and 401 rejection on malformed or missing keys.
-- **`CircuitBreakerTimeoutTest`**: Simulates slow backends, verifying that timeouts trip precisely at threshold limits and recover cleanly when traffic stabilizes.
-- **`DistributedTracingIntegrationTest`**: Verifies that Micrometer creates valid 128-bit trace IDs, stamps MDC context across Netty event loops, and echoes `X-Trace-ID` in HTTP responses.
-- **`ApiKeyValidationFilterTest`**: Unit-tests constant-time byte comparisons, whitespace trimming, and oversized payload rejections.
+### Test Suite Highlights
+- **`RateLimiterApplicationTests`**: Validates Spring ApplicationContext bootstrap, bean resolution, and route definitions.
+- **`RateLimitingIntegrationTest`**: Tests token-bucket enforcement, burst ceilings, and 429 structured JSON payload formatting.
+- **`SecurityIntegrationTest`**: Tests constant-time hash comparisons, missing key rejections, forged key rejections, and Actuator role authorization.
+- **`ResilienceIntegrationTest`**: Tests circuit-breaker tripping, 4,000ms TimeLimiter boundary conditions, and 503 fallback routing.
 
 ---
 
 ## Deep-Dive Documentation
 
-For engineers seeking deeper technical specifics on internal implementations:
-- 📖 [**System Architecture & Internals**](docs/architecture.md): In-depth reactive execution lifecycle, filter ordering rationale, and Redis Lua script mechanics.
-- 🛡️ [**Security Architecture & Threat Model**](docs/security-model.md): Detailed timing-attack analysis, zero-downtime key rotation, and defense-in-depth mitigations.
-- 🔄 [**Redis High Availability & Failover**](docs/redis-ha.md): Sentinel quorum monitoring, master-replica replication, and automated failover recovery.
-- 🚀 [**Automated Load Testing (k6)**](load-tests/README.md): Concurrency benchmarks, token refill verification, and circuit breaker trip metrics.
+- 📐 [**Architecture & Filter Chain Design**](docs/architecture.md)
+- 🔒 [**Zero-Trust Security & Key Hashing Model**](docs/security-model.md)
+- 📊 [**Prometheus & Grafana Observability Guide**](docs/observability.md)
+- 🔄 [**Redis High Availability & Sentinel Failover**](docs/redis-ha.md)
+- ⚡ [**k6 Concurrency & Load Testing Suite**](load-tests/README.md)
 
 ---
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

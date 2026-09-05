@@ -117,6 +117,18 @@ management:
     circuitbreakers:
       enabled: true
 
+  # ── Metrics & Prometheus Percentiles Distribution ─────────────────────────
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+      sla:
+        http.server.requests: 50ms, 100ms, 250ms, 500ms, 1000ms, 4000ms
+
   # ── Micrometer Tracing & Zipkin Export ─────────────────────────────────────
   tracing:
     sampling:
