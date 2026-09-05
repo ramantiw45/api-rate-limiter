@@ -23,6 +23,18 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # Zipkin – Distributed Tracing Backend & Web UI
+  # ─────────────────────────────────────────────────────────────────────────────
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: rate-limiter-zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # Spring Cloud Gateway – API Rate Limiter & Reverse Proxy
   # ─────────────────────────────────────────────────────────────────────────────
   gateway:
@@ -36,6 +48,8 @@ services:
       # Override Spring Data Redis connection to reach the redis service
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Distributed Tracing – export spans to Zipkin
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
       # Local-development defaults only. Override these values in .env for any
       # shared or deployed environment (see .env.example).
       ACTUATOR_USERNAME: ${ACTUATOR_USERNAME:-actuator}
@@ -48,6 +62,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      zipkin:
+        condition: service_started
     networks:
       - gateway-net
     restart: unless-stopped

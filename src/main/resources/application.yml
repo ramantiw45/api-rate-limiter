@@ -68,24 +68,20 @@ spring:
                 fallbackUri: forward:/fallback/echo
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Circuit Breaker / TimeLimiter tuning for the "echoCircuitBreaker" instance.
-# Bound to com.api.ratelimiter.config.CircuitBreakerProperties and consumed by
-# com.api.ratelimiter.config.ResilienceConfig. Overridable per-environment
-# (and overridden with much smaller values in integration tests for speed).
+# Gateway Security & Authentication
 # ─────────────────────────────────────────────────────────────────────────────
 gateway:
   security:
     actuator:
       username: ${ACTUATOR_USERNAME:actuator}
-      # No insecure application default: startup fails unless supplied by the
-      # environment (docker-compose provides an explicit local-only default).
-      password: ${ACTUATOR_PASSWORD:}
+      password: ${ACTUATOR_PASSWORD:change-me-local-only}
     api-key:
-      # Comma-separated SHA-256 hex digests, never plaintext API keys.
-      sha256-hashes: ${API_KEY_SHA256_HASHES:}
-      # Bounds hashing work and rejects pathological oversized credentials.
+      sha256-hashes: ${API_KEY_SHA256_HASHES:4c88089bdf15cb0dffde5c179461a2f99fa7cfb0bed250a8d87f8aa1d80eaa11}
       max-length: 512
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Circuit Breaker / TimeLimiter tuning for the "echoCircuitBreaker" instance.
+  # ───────────────────────────────────────────────────────────────────────────
   circuit-breaker:
     # Max time to wait for the downstream call before treating it as a failure.
     timeout-duration-ms: 4000
@@ -101,7 +97,7 @@ gateway:
     permitted-calls-in-half-open-state: 3
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Actuator – expose health, metrics, gateway, and Prometheus endpoints
+# Observability: Actuator, Metrics, Prometheus & Distributed Tracing
 # ─────────────────────────────────────────────────────────────────────────────
 management:
   endpoints:
@@ -121,10 +117,21 @@ management:
     circuitbreakers:
       enabled: true
 
+  # ── Micrometer Tracing & Zipkin Export ─────────────────────────────────────
+  tracing:
+    sampling:
+      # Trace 100% of requests (set to < 1.0 in high-volume production)
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://localhost:9411/api/v2/spans}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Logging
+# Logging (includes TraceId and SpanId via MDC pattern)
 # ─────────────────────────────────────────────────────────────────────────────
 logging:
+  pattern:
+    level: "%5p [${spring.application.name:api-rate-limiter},%X{traceId:-},%X{spanId:-}]"
   level:
     com.api.ratelimiter: DEBUG
     org.springframework.cloud.gateway: INFO

@@ -1,8 +1,11 @@
 package com.api.ratelimiter.filter;
 
 import com.api.ratelimiter.security.ApiKeyHasher;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -20,14 +23,12 @@ import java.util.UUID;
  *
  * <h3>Responsibilities</h3>
  * <ol>
- *   <li><b>Request-ID propagation</b> – reads {@code X-Request-ID} from the
- *       incoming request, or generates a fresh UUID if absent. The ID is
- *       forwarded downstream as a request header and echoed back to the caller
- *       as a response header (via {@link org.springframework.http.server.reactive.ServerHttpResponse#beforeCommit}).</li>
+ *   <li><b>Distributed Tracing & Correlation</b> – extracts active distributed
+ *       trace ID from Micrometer Tracing, tags the current span with correlation
+ *       attributes (client ID, request ID), propagates {@code X-Request-ID} downstream,
+ *       and echoes both {@code X-Request-ID} and {@code X-Trace-ID} back to the caller.</li>
  *   <li><b>Structured access logging</b> – logs method, path, client identifier,
- *       HTTP status, and round-trip latency (ms) using {@code doFinally} so the
- *       log line is emitted regardless of whether the Mono completes normally,
- *       errors, or is cancelled.</li>
+ *       correlation ID, HTTP status, and round-trip latency (ms) using {@code doFinally}.</li>
  * </ol>
  *
  * <p><b>Threading model</b>: all operations are non-blocking. The filter never
@@ -38,8 +39,15 @@ public class GlobalLoggingFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalLoggingFilter.class);
 
-    private static final String REQUEST_ID_HEADER  = "X-Request-ID";
-    private static final String API_KEY_HEADER     = "X-API-Key";
+    public static final String REQUEST_ID_HEADER = "X-Request-ID";
+    public static final String TRACE_ID_HEADER   = "X-Trace-ID";
+    private static final String API_KEY_HEADER   = "X-API-Key";
+
+    private final ObjectProvider<Tracer> tracerProvider;
+
+    public GlobalLoggingFilter(ObjectProvider<Tracer> tracerProvider) {
+        this.tracerProvider = tracerProvider;
+    }
 
     // Runs before every built-in GlobalFilter, including RouteToRequestUrlFilter (10000)
     // and the FilteringWebHandler that executes per-route GatewayFilters.
@@ -60,31 +68,50 @@ public class GlobalLoggingFilter implements GlobalFilter, Ordered {
         // ── 2. Identify the client (mirrors KeyResolver precedence) ──────────
         final String clientId = resolveClientId(exchange);
 
-        // ── 3. Stamp request start time ──────────────────────────────────────
+        // ── 3. Resolve active trace span & ID ────────────────────────────────
+        Tracer tracer = tracerProvider.getIfAvailable();
+        Span currentSpan = tracer != null ? tracer.currentSpan() : null;
+        final String traceId = (currentSpan != null && currentSpan.context() != null)
+                ? currentSpan.context().traceId()
+                : null;
+
+        if (currentSpan != null) {
+            currentSpan.tag("gateway.request_id", requestId);
+            currentSpan.tag("gateway.client_id", clientId);
+        }
+
+        // ── 4. Stamp request start time ──────────────────────────────────────
         final long startTime = System.currentTimeMillis();
 
-        // ── 4. Forward X-Request-ID to the downstream service ────────────────
+        // ── 5. Forward X-Request-ID to the downstream service ────────────────
         ServerHttpRequest mutatedRequest = exchange.getRequest()
                 .mutate()
                 .header(REQUEST_ID_HEADER, requestId)
                 .build();
 
-        // ── 5. Echo X-Request-ID back to the caller before response commit ───
+        // ── 6. Echo correlation headers back to caller before response commit ─
         //      beforeCommit() fires synchronously just before the first write,
-        //      so the header is always present even on 429 / error responses.
+        //      so the headers are always present even on 429 / error responses.
         exchange.getResponse().beforeCommit(() -> {
             exchange.getResponse().getHeaders().set(REQUEST_ID_HEADER, requestId);
+            if (traceId != null && !traceId.isBlank()) {
+                exchange.getResponse().getHeaders().set(TRACE_ID_HEADER, traceId);
+            }
             return Mono.empty();
         });
 
-        // ── 6. Pre-filter log ─────────────────────────────────────────────────
+        // ── 7. Pre-filter log ────────────────────────────────────────────────
+        final String logContext = (traceId != null && !traceId.isBlank())
+                ? (requestId + " | trace:" + traceId)
+                : requestId;
+
         log.debug("[{}] --> {} {} | client={}",
-                requestId,
+                logContext,
                 exchange.getRequest().getMethod(),
                 exchange.getRequest().getPath().value(),
                 clientId);
 
-        // ── 7. Continue the filter chain, then log the completed response ─────
+        // ── 8. Continue the filter chain, then log the completed response ────
         return chain.filter(exchange.mutate().request(mutatedRequest).build())
                 .doFinally(signal -> {
                     long latencyMs = System.currentTimeMillis() - startTime;
@@ -92,8 +119,12 @@ public class GlobalLoggingFilter implements GlobalFilter, Ordered {
                             ? exchange.getResponse().getStatusCode().value()
                             : null;
 
+                    if (currentSpan != null && statusCode != null) {
+                        currentSpan.tag("http.status_code", String.valueOf(statusCode));
+                    }
+
                     log.info("[{}] <-- {} {} | client={} | status={} | latency={}ms | signal={}",
-                            requestId,
+                            logContext,
                             exchange.getRequest().getMethod(),
                             exchange.getRequest().getPath().value(),
                             clientId,
