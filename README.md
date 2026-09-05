@@ -6,9 +6,10 @@
 [![Redis](https://img.shields.io/badge/Redis-7%20Alpine-red.svg)](https://redis.io/)
 [![Resilience4j](https://img.shields.io/badge/Resilience4j-Circuit%20Breaker-yellowgreen.svg)](https://resilience4j.readme.io/)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-Zipkin%20Tracing-blueviolet.svg)](https://opentelemetry.io/)
+[![k6](https://img.shields.io/badge/k6-Load%20Testing-7D64FF.svg)](https://k6.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
 
-An enterprise-grade, non-blocking API Gateway built with **Spring Cloud Gateway (Project Reactor / Netty)**, distributed **Redis Token-Bucket Rate Limiting**, **Resilience4j Circuit Breaking & Timeouts**, **Zero-Trust Constant-Time SHA-256 Authentication**, and **Distributed Tracing (Micrometer + OpenTelemetry + Zipkin)**.
+An enterprise-grade, non-blocking API Gateway built with **Spring Cloud Gateway (Project Reactor / Netty)**, distributed **Redis Token-Bucket Rate Limiting**, **Resilience4j Circuit Breaking & Timeouts**, **Zero-Trust Constant-Time SHA-256 Authentication**, **Distributed Tracing (Micrometer + OpenTelemetry + Zipkin)**, and **Redis Sentinel High Availability**.
 
 ---
 
@@ -26,6 +27,8 @@ An enterprise-grade, non-blocking API Gateway built with **Spring Cloud Gateway 
   - [4. Circuit Breaker & Timeout Fallback (503 Service Unavailable)](#4-circuit-breaker--timeout-fallback-503-service-unavailable)
   - [5. Actuator Health Probes & RBAC](#5-actuator-health-probes--rbac)
   - [6. Distributed Tracing in Zipkin](#6-distributed-tracing-in-zipkin)
+- [Automated Load Testing Suite (k6)](#automated-load-testing-suite-k6)
+- [Redis High Availability (Sentinel Failover)](#redis-high-availability-sentinel-failover)
 - [Configuration Reference](#configuration-reference)
 - [Generating API Keys and Hashes](#generating-api-keys-and-hashes)
 - [Project Directory Structure](#project-directory-structure)
@@ -40,7 +43,8 @@ Modern distributed systems and microservice architectures face significant relia
 1. **Noisy Neighbor Problems**: A single tenant can overwhelm shared downstream microservices with runaway traffic.
 2. **Cascading Failures**: Slow downstream APIs cause connection pool exhaustion, starving the entire platform.
 3. **Credential Sprawl & Leaks**: Upstream services accidentally receiving, caching, or logging plaintext API keys.
-4. **Visibility Blindspots**: Lack of cross-service correlation identifiers when tracking distributed latency spikes.
+4. **Single Points of Failure**: In-memory or standalone state stores crashing, bringing down traffic ingress.
+5. **Visibility Blindspots**: Lack of cross-service correlation identifiers when tracking distributed latency spikes.
 
 This gateway acts as an intelligent protective shield positioned in front of your microservices, delivering sub-millisecond rate enforcement, fault isolation, and full lifecycle request observability without blocking OS threads.
 
@@ -60,12 +64,12 @@ Imagine a movie theater entrance that accepts a maximum flow of visitors:
 ### 2. The Circuit Breaker Metaphor (Fault Tolerance)
 Like an electrical circuit breaker in your home that trips when current spikes to prevent a fire:
 - **CLOSED (Normal State)**: Requests flow freely to the downstream service. The gateway tracks success/failure rates over a sliding window of the last 10 requests.
-- **OPEN (Tripped State)**: If 50% or more calls fail or take longer than 4.0 seconds to respond, the breaker trips **OPEN**. Rather than letting requests pile up and hang your infrastructure, the gateway instantly fast-fails all subsequent traffic with a structured **`503 Service Unavailable`** fallback.
+- **OPEN (Tripped State)**: If 50% or more calls fail or take longer than 4.0 seconds to respond, the breaker trips **OPEN**. Rather than letting requests pile up and hang your infrastructure, the gateway instantly fast-fails all subsequent traffic in sub-20ms with a structured **`503 Service Unavailable`** fallback.
 - **HALF-OPEN (Testing Recovery)**: After a cooling period (10 seconds), the circuit allows a small number of trial requests through. If they succeed, the breaker resets to **CLOSED**. If any fail, it stays **OPEN**.
 
 ### 3. Zero-Trust Key Hashing (Constant-Time Security)
 - **Why hashes?** We never store, compare, or transmit plaintext API keys. Only the cryptographic **SHA-256 digest** is configured in the gateway.
-- **Why constant-time comparison?** Standard text comparisons (`stringA == stringB`) exit early on the first mismatched letter. Malicious hackers can measure nanosecond differences in server response times to guess keys character-by-character (a *timing attack*). We compare hashes using `MessageDigest.isEqual()`, which takes the exact same number of CPU cycles regardless of whether zero or all bytes match.
+- **Why constant-time comparison?** Standard text comparisons (`stringA == stringB`) exit early on the first mismatched letter. Malicious actors can measure nanosecond differences in server response times to guess keys character-by-character (a *timing attack*). We compare hashes using `MessageDigest.isEqual()`, which takes the exact same number of CPU cycles regardless of whether zero or all bytes match.
 - **Upstream Credential Stripping**: The gateway authenticates the client at the edge and deletes the `X-API-Key` header before proxying the request downstream. Internal microservices never see or log API keys.
 
 ---
@@ -74,6 +78,7 @@ Like an electrical circuit breaker in your home that trips when current spikes t
 
 - **Non-Blocking Reactive Engine**: Powered by Spring Cloud Gateway on Netty and Project Reactor. Thousands of concurrent requests are handled by a small, fixed number of event-loop threads.
 - **Atomic Distributed Rate Limiting**: Token bucket state is maintained in Redis using atomic **Lua scripts**, ensuring consistency even when the gateway is scaled horizontally across multiple instances.
+- **Redis High Availability (Sentinel)**: 5-node fault-tolerant topology with automated leader election, master-replica replication, and zero-downtime client failover via Lettuce.
 - **Two-Layer Timeout Defense**:
   - *Layer 1*: Reactor Netty HTTP client response timeout ceiling (5,000ms).
   - *Layer 2*: Resilience4j TimeLimiter (4,000ms) tightly coupled with the Circuit Breaker.
@@ -136,7 +141,7 @@ sequenceDiagram
 ### Prerequisites
 - [Docker](https://docs.docker.com/get-docker/) (Engine 24+)
 - [Docker Compose](https://docs.docker.com/compose/) (v2+)
-- *Optional for local build*: Java 21 JDK and Maven 3.9+
+- *Optional for local development*: Java 21 JDK and Maven 3.9+
 
 ### 1. Clone & Configure Secrets
 Clone the repository and initialize your local environment configuration:
@@ -155,14 +160,14 @@ The preconfigured `.env` comes ready out-of-the-box with development credentials
 - **Actuator Password**: `SuperSecretActuatorPass123!`
 
 ### 2. Build and Start the Entire Stack
-Run Docker Compose in detached mode. This builds the multi-stage gateway image, starts Redis with persistent storage, and boots the Zipkin distributed tracing server:
+Run Docker Compose in detached mode:
 
 ```bash
 docker compose up --build -d
 ```
 
 ### 3. Verify Container Health
-Check that all three containers are healthy:
+Check that all containers are healthy:
 
 ```bash
 docker compose ps
@@ -181,7 +186,7 @@ rate-limiter-zipkin    openzipkin/zipkin:3        Up (healthy)              0.0.
 ## Step-by-Step API Testing Guide
 
 ### 1. Happy Path Request (200 OK)
-Send an authenticated request through the gateway to the `/echo/**` route. The gateway strips prefix `/echo`, validates the key, deducts a rate-limit token, attaches distributed trace headers, and proxies to upstream:
+Send an authenticated request through the gateway to the `/echo/**` route:
 
 ```bash
 curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/get
@@ -205,12 +210,11 @@ Content-Type: application/json
   "url": "https://localhost:8080/get"
 }
 ```
-*Notice how `X-API-Key` is completely absent from the upstream request body, while standard W3C `Traceparent` and correlation headers were added.*
 
 ---
 
 ### 2. Rate Limiting in Action (429 Too Many Requests)
-Simulate a burst of requests exceeding the bucket capacity (10 tokens) using PowerShell or Bash:
+Simulate a burst of requests exceeding the bucket capacity (10 tokens):
 
 ```bash
 # Rapidly fire 15 requests
@@ -229,14 +233,6 @@ done
 429
 ```
 
-When rate-limited, the gateway returns:
-```http
-HTTP/1.1 429 Too Many Requests
-X-RateLimit-Remaining: 0
-X-Request-ID: c54f738b-fa3b-48ae-94a1-5d9c22881b2d
-X-Trace-ID: ed03a985d82084c8fb27da259d64f260
-```
-
 ---
 
 ### 3. Zero-Trust Authentication Failures (401 Unauthorized)
@@ -247,8 +243,6 @@ curl -i http://localhost:8080/echo/get
 ```
 ```http
 HTTP/1.1 401 Unauthorized
-Content-Type: application/json
-
 {"timestamp":"2026-09-05T17:45:00Z","status":401,"error":"Unauthorized","message":"Missing X-API-Key header"}
 ```
 
@@ -258,8 +252,6 @@ curl -i -H "X-API-Key: invalid-key-attack" http://localhost:8080/echo/get
 ```
 ```http
 HTTP/1.1 401 Unauthorized
-Content-Type: application/json
-
 {"timestamp":"2026-09-05T17:45:05Z","status":401,"error":"Unauthorized","message":"Invalid API key"}
 ```
 
@@ -269,7 +261,6 @@ Content-Type: application/json
 Test the Resilience4j TimeLimiter by calling an upstream endpoint with artificial latency greater than our 4.0-second limit:
 
 ```bash
-# Request upstream to delay response by 5 seconds
 curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/delay/5
 ```
 
@@ -293,7 +284,7 @@ X-Trace-ID: 7a86f1e319fa3ec9c5f8dfb1580d8a57
 
 ### 5. Actuator Health Probes & RBAC
 
-#### Public Unauthenticated Health Probe (Kubernetes Liveness / Readiness)
+#### Public Unauthenticated Health Probe
 ```bash
 curl -i http://localhost:8080/actuator/health
 ```
@@ -306,31 +297,6 @@ Inspect Redis connectivity, disk status, and circuit breaker states:
 ```bash
 curl -i -u actuator:SuperSecretActuatorPass123! http://localhost:8080/actuator/health
 ```
-```json
-{
-  "status": "UP",
-  "components": {
-    "circuitBreakers": {
-      "status": "UP",
-      "details": {
-        "echoCircuitBreaker": {
-          "status": "UP",
-          "details": {
-            "state": "CLOSED",
-            "failureRate": "0.0%"
-          }
-        }
-      }
-    },
-    "redis": {
-      "status": "UP",
-      "details": {
-        "version": "7.4.2"
-      }
-    }
-  }
-}
-```
 
 #### Scrape Prometheus Metrics
 ```bash
@@ -341,15 +307,66 @@ curl -s -u actuator:SuperSecretActuatorPass123! http://localhost:8080/actuator/p
 
 ### 6. Distributed Tracing in Zipkin
 
-Every incoming request generates a distributed trace exported to Zipkin:
 1. Open your browser and navigate to **[http://localhost:9411](http://localhost:9411)**.
-2. Click the **Run Query** button.
-3. Select any trace to view the interactive waterfall timeline detailing:
-   - Request ingress at Netty server
-   - Security filter chain execution
-   - Token bucket calculation
-   - Outbound Netty client latency to `httpbin.org`
-   - Span tags containing `gateway.client_id`, `gateway.request_id`, and `http.status_code`.
+2. Click **Run Query**.
+3. Select any trace to inspect the waterfall breakdown detailing Netty server ingress, security validation, token decrement, and downstream latency.
+
+---
+
+## Automated Load Testing Suite (k6)
+
+The repository includes automated performance and resilience benchmarks powered by [Grafana k6](https://k6.io/). Run benchmarks directly via Docker without host installations:
+
+### 1. Burst Capacity Benchmark
+Fires 25 concurrent requests in a 1-second burst window. Verifies that exactly 10 requests succeed (`200 OK`) and 15 requests are rejected with `429 Too Many Requests`:
+```bash
+docker compose --profile load-test run --rm k6 run /scripts/rate-limit-burst.js
+```
+
+### 2. Steady-State Refill Benchmark
+Paces 4 requests/second for 15 seconds against the 5 tokens/sec replenish rate. Verifies `0.0%` error rate and sub-second latencies:
+```bash
+docker compose --profile load-test run --rm k6 run /scripts/steady-state-refill.js
+```
+
+### 3. Circuit Breaker Lifecycle Benchmark
+Tests tripping the circuit breaker via 5 slow requests, confirms that subsequent requests fast-fail in **sub-20ms** with HTTP 503 fallback, sleeps 11s, and validates automatic recovery back to `200 OK`:
+```bash
+docker compose --profile load-test run --rm k6 run /scripts/circuit-breaker-trip.js
+```
+
+👉 See [**Load Testing Guide**](load-tests/README.md) for detailed performance metrics and parameter tuning.
+
+---
+
+## Redis High Availability (Sentinel Failover)
+
+To eliminate Redis as a Single Point of Failure (SPOF), an enterprise 5-node Sentinel topology is provided via `docker-compose.ha.yml`:
+
+- **Redis Master (`rate-limiter-redis-master`)**: Active leader for Token Bucket writes.
+- **Redis Replica (`rate-limiter-redis-replica`)**: Hot-standby synchronized follower.
+- **Sentinel Quorum (`redis-sentinel-1`, `2`, `3`)**: 3-node monitoring quorum with quorum = 2.
+- **Lettuce Client Integration**: Transparently receives `+switch-master` events and reconnects with zero process restarts.
+
+### Launch the HA Cluster
+```bash
+docker compose -f docker-compose.ha.yml up --build -d
+```
+
+### Simulate Automatic Failover
+Kill the active master and observe Sentinel automatically elect and promote the replica:
+```bash
+# 1. Stop master
+docker stop rate-limiter-redis-master
+
+# 2. Watch Sentinel logs elect new leader
+docker logs -f rate-limiter-sentinel-1
+
+# 3. Verify traffic continues flowing seamlessly
+curl -i -H "X-API-Key: my-secure-api-key" http://localhost:8080/echo/get
+```
+
+👉 See [**Redis HA Architecture Guide**](docs/redis-ha.md) for failover mechanics, topology diagrams, and self-healing details.
 
 ---
 
@@ -364,6 +381,8 @@ The application is configured through `application.yml` and overridable via stan
 | `ACTUATOR_PASSWORD` | `change-me-local-only` | Password for privileged Actuator endpoints. |
 | `REDIS_HOST` | `localhost` | Hostname of the Redis cache/token store (`redis` in Docker). |
 | `REDIS_PORT` | `6379` | Port for Redis connection. |
+| `SPRING_DATA_REDIS_SENTINEL_MASTER` | *(empty)* | Sentinel master name (e.g. `mymaster`) for HA deployments. |
+| `SPRING_DATA_REDIS_SENTINEL_NODES` | *(empty)* | Comma-separated list of Sentinel host:port addresses. |
 | `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` | `http://localhost:9411/api/v2/spans` | URL endpoint for exporting OpenTelemetry spans to Zipkin. |
 | `ECHO_UPSTREAM_URI` | `https://httpbin.org` | Target upstream URL for the `/echo/**` route. |
 
@@ -394,12 +413,21 @@ API_KEY_SHA256_HASHES=0b21665133000ed0918be369efd62a7886b5b382afba0a66ca7adfe883
 ```
 api-rate-limiter/
 ├── .env.example                               # Template for secrets and credentials
-├── docker-compose.yml                         # Orchestration: Gateway, Redis 7, Zipkin 3
+├── docker-compose.yml                         # Standalone orchestration: Gateway, Redis 7, Zipkin 3, k6
+├── docker-compose.ha.yml                      # High Availability: 1 Master, 1 Replica, 3 Sentinels, Gateway
 ├── Dockerfile                                 # Multi-stage container build (JDK 21 + JRE 21)
 ├── pom.xml                                    # Dependencies (Spring Boot 3.3.4, OTel, Resilience4j)
+├── docker/
+│   └── redis-ha/                              # Sentinel entrypoint and runtime provisioning
 ├── docs/                                      # In-depth technical guides
 │   ├── architecture.md                        # Filter execution, thread model & state machines
-│   └── security-model.md                      # Constant-time auth, timing attacks & RBAC
+│   ├── security-model.md                      # Constant-time auth, timing attacks & RBAC
+│   └── redis-ha.md                            # Redis Sentinel HA quorum & failover mechanics
+├── load-tests/                                # Automated k6 load testing suite
+│   ├── rate-limit-burst.js                    # Burst capacity benchmark
+│   ├── steady-state-refill.js                 # Token refill steady-state benchmark
+│   ├── circuit-breaker-trip.js                # Fast-fail & recovery lifecycle benchmark
+│   └── README.md                              # Benchmark execution guide & metric definitions
 └── src/
     ├── main/
     │   ├── java/com/api/ratelimiter/
@@ -458,6 +486,8 @@ mvn clean verify
 For engineers seeking deeper technical specifics on internal implementations:
 - 📖 [**System Architecture & Internals**](docs/architecture.md): In-depth reactive execution lifecycle, filter ordering rationale, and Redis Lua script mechanics.
 - 🛡️ [**Security Architecture & Threat Model**](docs/security-model.md): Detailed timing-attack analysis, zero-downtime key rotation, and defense-in-depth mitigations.
+- 🔄 [**Redis High Availability & Failover**](docs/redis-ha.md): Sentinel quorum monitoring, master-replica replication, and automated failover recovery.
+- 🚀 [**Automated Load Testing (k6)**](load-tests/README.md): Concurrency benchmarks, token refill verification, and circuit breaker trip metrics.
 
 ---
 

@@ -6,7 +6,7 @@ spring:
     name: api-rate-limiter
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Redis connection (overridden via env vars in Docker / docker-compose)
+  # Redis connection (Standalone or Sentinel High Availability)
   # ─────────────────────────────────────────────────────────────────────────────
   data:
     redis:
