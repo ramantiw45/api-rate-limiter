@@ -76,6 +76,22 @@ services:
       retries: 3
       start_period: 60s   # allow JVM warm-up time
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # k6 – Automated Load Testing Runner
+  # ─────────────────────────────────────────────────────────────────────────────
+  k6:
+    image: grafana/k6:latest
+    container_name: rate-limiter-k6
+    profiles:
+      - load-test
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      API_KEY: my-secure-api-key
+    volumes:
+      - ./load-tests:/scripts
+    networks:
+      - gateway-net
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared overlay network (bridge)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +100,7 @@ networks:
     driver: bridge
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Named volume for Redis persistence
+# Persistent volume for Redis Token Bucket state
 # ─────────────────────────────────────────────────────────────────────────────
 volumes:
   redis-data:
