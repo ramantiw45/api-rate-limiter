@@ -54,9 +54,9 @@ services:
       # shared or deployed environment (see .env.example).
       ACTUATOR_USERNAME: ${ACTUATOR_USERNAME:-actuator}
       ACTUATOR_PASSWORD: ${ACTUATOR_PASSWORD:-change-me-local-only}
-      # SHA-256("local-development-key"). The plaintext key is never passed to
+      # SHA-256("my-secure-api-key"). The plaintext key is never passed to
       # the application; replace this digest in every non-local environment.
-      API_KEY_SHA256_HASHES: ${API_KEY_SHA256_HASHES:-4c88089bdf15cb0dffde5c179461a2f99fa7cfb0bed250a8d87f8aa1d80eaa11}
+      API_KEY_SHA256_HASHES: ${API_KEY_SHA256_HASHES:-0b21665133000ed0918be369efd62a7886b5b382afba0a66ca7adfe88340d9e8}
       # Optional: bump to DEBUG for verbose gateway routing logs
       LOGGING_LEVEL_COM_API_RATELIMITER: INFO
     depends_on:

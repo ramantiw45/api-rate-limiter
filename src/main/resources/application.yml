@@ -76,7 +76,7 @@ gateway:
       username: ${ACTUATOR_USERNAME:actuator}
       password: ${ACTUATOR_PASSWORD:change-me-local-only}
     api-key:
-      sha256-hashes: ${API_KEY_SHA256_HASHES:4c88089bdf15cb0dffde5c179461a2f99fa7cfb0bed250a8d87f8aa1d80eaa11}
+      sha256-hashes: ${API_KEY_SHA256_HASHES:0b21665133000ed0918be369efd62a7886b5b382afba0a66ca7adfe88340d9e8}
       max-length: 512
 
   # ───────────────────────────────────────────────────────────────────────────
